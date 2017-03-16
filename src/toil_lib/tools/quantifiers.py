@@ -3,11 +3,11 @@ import os
 import subprocess
 
 from toil_lib.files import tarball_files
-from toil_lib.programs import docker_call
+from toil_lib.programs import docker_call, local_call
 from toil_lib.urls import download_url
 
 
-def run_kallisto(job, r1_id, r2_id, kallisto_index_url):
+def run_kallisto(job, r1_id, r2_id, kallisto_index_url, appExec=None):
     """
     RNA quantification via Kallisto
 
@@ -15,35 +15,42 @@ def run_kallisto(job, r1_id, r2_id, kallisto_index_url):
     :param str r1_id: FileStoreID of fastq (pair 1)
     :param str r2_id: FileStoreID of fastq (pair 2 if applicable, otherwise pass None for single-end)
     :param str kallisto_index_url: FileStoreID for Kallisto index file
+    :param str appExec: The executable of fastqc. If not specified, docker image will be used.
     :return: FileStoreID from Kallisto output
     :rtype: str
     """
     work_dir = job.fileStore.getLocalTempDir()
     download_url(url=kallisto_index_url, name='kallisto_hg38.idx', work_dir=work_dir)
+    dirPrefix = '/data'
+    if appExec:
+        dirPrefix = '.'
     # Retrieve files
     parameters = ['quant',
                   '-i', '/data/kallisto_hg38.idx',
                   '-t', str(job.cores),
-                  '-o', '/data/',
+                  '-o', dirPrefix + '/',
                   '-b', '100']
     if r1_id and r2_id:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1_cutadapt.fastq'))
         job.fileStore.readGlobalFile(r2_id, os.path.join(work_dir, 'R2_cutadapt.fastq'))
-        parameters.extend(['/data/R1_cutadapt.fastq', '/data/R2_cutadapt.fastq'])
+        parameters.extend([dirPrefix + '/R1_cutadapt.fastq', dirPrefix + '/R2_cutadapt.fastq'])
     else:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1_cutadapt.fastq'))
-        parameters.extend(['--single', '-l', '200', '-s', '15', '/data/R1_cutadapt.fastq'])
+        parameters.extend(['--single', '-l', '200', '-s', '15', dirPrefix + '/R1_cutadapt.fastq'])
 
     # Call: Kallisto
-    docker_call(tool='quay.io/ucsc_cgl/kallisto:0.42.4--35ac87df5b21a8e8e8d159f26864ac1e1db8cf86',
-                work_dir=work_dir, parameters=parameters)
+    if appExec:
+        local_call(tool=appExec, work_dir=work_dir, parameters=parameters)
+    else:
+        docker_call(tool='quay.io/ucsc_cgl/kallisto:0.42.4--35ac87df5b21a8e8e8d159f26864ac1e1db8cf86',
+                    work_dir=work_dir, parameters=parameters)
     # Tar output files together and store in fileStore
     output_files = [os.path.join(work_dir, x) for x in ['run_info.json', 'abundance.tsv', 'abundance.h5']]
     tarball_files(tar_name='kallisto.tar.gz', file_paths=output_files, output_dir=work_dir)
     return job.fileStore.writeGlobalFile(os.path.join(work_dir, 'kallisto.tar.gz'))
 
 
-def run_rsem(job, bam_id, rsem_ref_url, paired=True):
+def run_rsem(job, bam_id, rsem_ref_url, paired=True, appExec=None):
     """
     RNA quantification with RSEM
 
@@ -51,6 +58,7 @@ def run_rsem(job, bam_id, rsem_ref_url, paired=True):
     :param str bam_id: FileStoreID of transcriptome bam for quantification
     :param str rsem_ref_url: URL of RSEM reference (tarball)
     :param bool paired: If True, uses parameters for paired end data
+    :param str appExec: The executable of fastqc. If not specified, docker image will be used.
     :return: FileStoreIDs for RSEM's gene and isoform output
     :rtype: str
     """
@@ -58,13 +66,16 @@ def run_rsem(job, bam_id, rsem_ref_url, paired=True):
     download_url(url=rsem_ref_url, name='rsem_ref.tar.gz', work_dir=work_dir)
     subprocess.check_call(['tar', '-xvf', os.path.join(work_dir, 'rsem_ref.tar.gz'), '-C', work_dir])
     os.remove(os.path.join(work_dir, 'rsem_ref.tar.gz'))
+    dirPrefix = '/data/'
+    if appExec:
+        dirPrefix = ''
     # Determine tarball structure - based on it, ascertain folder name and rsem reference prefix
     rsem_files = []
     for root, directories, files in os.walk(work_dir):
         rsem_files.extend([os.path.join(root, x) for x in files])
     # "grp" is a required RSEM extension that should exist in the RSEM reference
     ref_prefix = [os.path.basename(os.path.splitext(x)[0]) for x in rsem_files if 'grp' in x][0]
-    ref_folder = os.path.join('/data', os.listdir(work_dir)[0]) if len(os.listdir(work_dir)) == 1 else '/data'
+    ref_folder = os.path.join(dirPrefix, os.listdir(work_dir)[0]) if len(os.listdir(work_dir)) == 1 else dirPrefix
     # I/O
     job.fileStore.readGlobalFile(bam_id, os.path.join(work_dir, 'transcriptome.bam'))
     output_prefix = 'rsem'
@@ -75,20 +86,23 @@ def run_rsem(job, bam_id, rsem_ref_url, paired=True):
                   '--forward-prob', '0.5',
                   '--seed-length', '25',
                   '--fragment-length-mean', '-1.0',
-                  '--bam', '/data/transcriptome.bam',
+                  '--bam', dirPrefix + 'transcriptome.bam',
                   os.path.join(ref_folder, ref_prefix),
                   output_prefix]
     if paired:
         parameters = ['--paired-end'] + parameters
-    docker_call(tool='quay.io/ucsc_cgl/rsem:1.2.25--d4275175cc8df36967db460b06337a14f40d2f21',
-                parameters=parameters, work_dir=work_dir)
+    if appExec:
+        local_call(tool=appExec, work_dir=work_dir, parameters=parameters)
+    else:
+        docker_call(tool='quay.io/ucsc_cgl/rsem:1.2.25--d4275175cc8df36967db460b06337a14f40d2f21',
+                    parameters=parameters, work_dir=work_dir)
     # Write to FileStore
     gene_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, output_prefix + '.genes.results'))
     isoform_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, output_prefix + '.isoforms.results'))
     return gene_id, isoform_id
 
 
-def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id):
+def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id, appExec=None):
     """
     Parses RSEMs output to produce the separate .tab files (TPM, FPKM, counts) for both gene and isoform.
     These are two-column files: Genes and Quantifications.
@@ -97,6 +111,7 @@ def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id):
     :param JobFunctionWrappingJob job: passed automatically by Toil
     :param str rsem_gene_id: FileStoreID of rsem_gene_ids
     :param str rsem_isoform_id: FileStoreID of rsem_isoform_ids
+    :param str appExec: The executable of fastqc. If not specified, docker image will be used.
     :return: FileStoreID from RSEM post process tarball
     :rytpe: str
     """
@@ -106,8 +121,11 @@ def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id):
     iso = job.fileStore.readGlobalFile(rsem_isoform_id, os.path.join(work_dir, 'rsem_isoforms.results'))
     # Perform HUGO gene / isoform name mapping
     command = ['-g', 'rsem_genes.results', '-i', 'rsem_isoforms.results']
-    docker_call(tool='quay.io/ucsc_cgl/gencode_hugo_mapping:1.0--cb4865d02f9199462e66410f515c4dabbd061e4d',
-                parameters=command, work_dir=work_dir)
+    if appExec:
+        local_call(tool=appExec, parameters=command, work_dir=work_dir)
+    else:
+        docker_call(tool='quay.io/ucsc_cgl/gencode_hugo_mapping:1.0--cb4865d02f9199462e66410f515c4dabbd061e4d',
+                    parameters=command, work_dir=work_dir)
     hugo_files = [os.path.join(work_dir, x) for x in ['rsem_genes.hugo.results', 'rsem_isoforms.hugo.results']]
     # Create tarballs for outputs
     tarball_files('rsem.tar.gz', file_paths=[os.path.join(work_dir, x) for x in [genes, iso]], output_dir=work_dir)

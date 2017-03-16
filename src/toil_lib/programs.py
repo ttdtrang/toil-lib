@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 from bd2k.util.exceptions import panic
+from urlparse import urlparse
 
 _log = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ def docker_call(tool,
         outputs = {}
 
     for filename in inputs:
-        assert(os.path.isfile(os.path.join(work_dir, filename)))
+        assert (os.path.isfile(os.path.join(work_dir, filename)))
 
     if mock:
         for filename, url in outputs.items():
@@ -65,7 +66,7 @@ def docker_call(tool,
                 # create mock file
                 if not os.path.exists(file_path):
                     f = open(file_path, 'w')
-                    f.write("contents") # FIXME
+                    f.write("contents")  # FIXME
                     f.close()
 
             else:
@@ -74,7 +75,7 @@ def docker_call(tool,
                     outfile = download_url(url, work_dir=work_dir, name=filename)
                 assert os.path.exists(file_path)
         return
-    
+
     base_docker_call = ['docker', 'run',
                         '--log-driver=none',
                         '-v', '{}:/data'.format(os.path.abspath(work_dir))]
@@ -109,7 +110,43 @@ def docker_call(tool,
     for filename in outputs.keys():
         if not os.path.isabs(filename):
             filename = os.path.join(work_dir, filename)
-        assert(os.path.isfile(filename))
+        assert (os.path.isfile(filename))
+
+
+def local_call(tool,
+               parameters=None,
+               work_dir='.',
+               outfile=None,
+               inputs=None,
+               outputs=None,
+               check_output=False):
+    if parameters is None:
+        parameters = []
+    if inputs is None:
+        inputs = []
+    if outputs is None:
+        outputs = {}
+
+    if urlparse(tool).scheme == 'file':
+        tool = urlparse(tool).path
+    directCall = [tool] + parameters
+    for filename in inputs:
+        assert (os.path.isfile(os.path.join(work_dir, filename)))
+
+    _log.debug("Calling local app with command %s." % " ".join(directCall))
+
+    if outfile:
+        subprocess.check_call(directCall, stdout=outfile, cwd=work_dir)
+    else:
+        if check_output:
+            return subprocess.check_output(directCall, cwd=work_dir)
+        else:
+            subprocess.check_call(directCall, cwd=work_dir)
+    print("*************** fastqc is called in %s" % work_dir)
+    for filename in outputs.keys():
+        if not os.path.isabs(filename):
+            filename = os.path.join(work_dir, filename)
+        assert (os.path.isfile(filename))
 
 
 def _fix_permissions(base_docker_call, tool, work_dir):

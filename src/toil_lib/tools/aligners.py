@@ -2,11 +2,11 @@ import os
 
 import subprocess
 
-from toil_lib.programs import docker_call
+from toil_lib.programs import docker_call, local_call
 from toil_lib.urls import download_url
 
 
-def run_star(job, r1_id, r2_id, star_index_url, wiggle=False):
+def run_star(job, r1_id, r2_id, star_index_url, wiggle=False, appExec=None):
     """
     Performs alignment of fastqs to bam via STAR
 
@@ -18,15 +18,19 @@ def run_star(job, r1_id, r2_id, star_index_url, wiggle=False):
     :param str r2_id: FileStoreID of fastq (pair 2 if applicable, else pass None)
     :param str star_index_url: STAR index tarball
     :param bool wiggle: If True, will output a wiggle file and return it
+    :param str appExec: the locally available executable of star aligner. If not specified, docker image will be used
     :return: FileStoreID from RSEM
     :rtype: str
     """
     work_dir = job.fileStore.getLocalTempDir()
     download_url(url=star_index_url, name='starIndex.tar.gz', work_dir=work_dir)
+    dirPrefix = '/data'
+    if appExec:
+        dirPrefix='.'
     subprocess.check_call(['tar', '-xvf', os.path.join(work_dir, 'starIndex.tar.gz'), '-C', work_dir])
     os.remove(os.path.join(work_dir, 'starIndex.tar.gz'))
     # Determine tarball structure - star index contains are either in a subdir or in the tarball itself
-    star_index = os.path.join('/data', os.listdir(work_dir)[0]) if len(os.listdir(work_dir)) == 1 else '/data'
+    star_index = os.path.join(dirPrefix, os.listdir(work_dir)[0]) if len(os.listdir(work_dir)) == 1 else dirPrefix
     # Parameter handling for paired / single-end data
     parameters = ['--runThreadN', str(job.cores),
                   '--genomeDir', star_index,
@@ -53,16 +57,20 @@ def run_star(job, r1_id, r2_id, star_index_url, wiggle=False):
     if r1_id and r2_id:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1.fastq'))
         job.fileStore.readGlobalFile(r2_id, os.path.join(work_dir, 'R2.fastq'))
-        parameters.extend(['--readFilesIn', '/data/R1.fastq', '/data/R2.fastq'])
+        parameters.extend(['--readFilesIn', dirPrefix + '/R1.fastq', dirPrefix + '/R2.fastq'])
     else:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1.fastq'))
-        parameters.extend(['--readFilesIn', '/data/R1.fastq'])
+        parameters.extend(['--readFilesIn', dirPrefix + '/R1.fastq'])
     # Call: STAR Mapping
-    docker_call(tool='quay.io/ucsc_cgl/star:2.4.2a--bcbd5122b69ff6ac4ef61958e47bde94001cfe80',
-                work_dir=work_dir, parameters=parameters)
+    if appExec:
+        local_call(tool=appExec, parameters=parameters, work_dir=work_dir)
+    else:
+        docker_call(tool='quay.io/ucsc_cgl/star:2.4.2a--bcbd5122b69ff6ac4ef61958e47bde94001cfe80',
+                    work_dir=work_dir, parameters=parameters)
     # Check output bam isnt size zero
     sorted_bam_path = os.path.join(work_dir, 'rnaAligned.sortedByCoord.out.bam')
-    assert(os.stat(sorted_bam_path).st_size > 0, 'Genome-aligned bam failed to sort. Ensure sufficient memory is free.')
+    assert (
+    os.stat(sorted_bam_path).st_size > 0, 'Genome-aligned bam failed to sort. Ensure sufficient memory is free.')
     # Write to fileStore
     sorted_id = job.fileStore.writeGlobalFile(sorted_bam_path)
     transcriptome_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, 'rnaAligned.toTranscriptome.out.bam'))
