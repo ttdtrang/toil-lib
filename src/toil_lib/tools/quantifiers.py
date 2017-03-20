@@ -20,13 +20,13 @@ def run_kallisto(job, r1_id, r2_id, kallisto_index_url, appExec=None):
     :rtype: str
     """
     work_dir = job.fileStore.getLocalTempDir()
-    download_url(url=kallisto_index_url, name='kallisto_hg38.idx', work_dir=work_dir)
+    download_url(url=kallisto_index_url, name='kallisto.idx', work_dir=work_dir)
     dirPrefix = '/data'
     if appExec:
         dirPrefix = '.'
     # Retrieve files
     parameters = ['quant',
-                  '-i', '/data/kallisto_hg38.idx',
+                  '-i', dirPrefix + '/kallisto.idx',
                   '-t', str(job.cores),
                   '-o', dirPrefix + '/',
                   '-b', '100']
@@ -50,7 +50,7 @@ def run_kallisto(job, r1_id, r2_id, kallisto_index_url, appExec=None):
     return job.fileStore.writeGlobalFile(os.path.join(work_dir, 'kallisto.tar.gz'))
 
 
-def run_rsem(job, bam_id, rsem_ref_url, paired=True, appExec=None):
+def run_rsem(job, bam_id, rsem_ref_url, paired=True, appExec=None, postprocess=False):
     """
     RNA quantification with RSEM
 
@@ -97,9 +97,16 @@ def run_rsem(job, bam_id, rsem_ref_url, paired=True, appExec=None):
         docker_call(tool='quay.io/ucsc_cgl/rsem:1.2.25--d4275175cc8df36967db460b06337a14f40d2f21',
                     parameters=parameters, work_dir=work_dir)
     # Write to FileStore
-    gene_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, output_prefix + '.genes.results'))
-    isoform_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, output_prefix + '.isoforms.results'))
-    return gene_id, isoform_id
+    genes = os.path.join(work_dir, output_prefix + '.genes.results')
+    iso = os.path.join(work_dir, output_prefix + '.isoforms.results')
+    if postprocess:
+        gene_id = job.fileStore.writeGlobalFile(genes)
+        isoform_id = job.fileStore.writeGlobalFile(iso)
+        return gene_id, isoform_id
+    else:
+        tarball_files('rsem.tar.gz', file_paths=[os.path.join(work_dir, x) for x in [genes, iso]], output_dir=work_dir)
+        rsem_id = job.fileStore.writeGlobalFile(os.path.join(work_dir, 'rsem.tar.gz'))
+        return rsem_id
 
 
 def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id, appExec=None):
@@ -111,7 +118,7 @@ def run_rsem_postprocess(job, rsem_gene_id, rsem_isoform_id, appExec=None):
     :param JobFunctionWrappingJob job: passed automatically by Toil
     :param str rsem_gene_id: FileStoreID of rsem_gene_ids
     :param str rsem_isoform_id: FileStoreID of rsem_isoform_ids
-    :param str appExec: The executable of fastqc. If not specified, docker image will be used.
+    :param str appExec: The executable of rsem. If not specified, docker image will be used.
     :return: FileStoreID from RSEM post process tarball
     :rytpe: str
     """
