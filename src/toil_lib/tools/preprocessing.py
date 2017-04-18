@@ -1,9 +1,10 @@
-import os
+import os, re
 
 from toil.job import PromisedRequirement
 
 from toil_lib import require
 from toil_lib.programs import docker_call, local_call
+from toil_lib.urls import download_url
 
 
 def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=None):
@@ -21,12 +22,20 @@ def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=No
     work_dir = job.fileStore.getLocalTempDir()
     if r2_id:
         require(rev_3pr_adapter, "Paired end data requires a reverse 3' adapter sequence.")
-    # Retrieve files
-    parameters = ['-a', fwd_3pr_adapter,
-                  '-m', '35']
+
     dirPrefix = '/data/'
     if appExec:
         dirPrefix = ''
+    if re.search(':', fwd_3pr_adapter):
+        download_url(url=fwd_3pr_adapter, name='fwd_adapter.fa', work_dir=work_dir)
+        fwd_3pr_adapter = 'file:' + os.path.join(dirPrefix + work_dir, 'fwd_adapter.fa',)
+    if re.search(':', rev_3pr_adapter):
+        download_url(url=rev_3pr_adapter, name='rev_adapter.fa', work_dir=work_dir)
+        rev_3pr_adapter = 'file:' + os.path.join(dirPrefix + work_dir, 'rev_adapter.fa')
+
+    # Retrieve files
+    parameters = ['-a', fwd_3pr_adapter,
+                  '-m', '35']
     if r1_id and r2_id:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1.fastq'))
         job.fileStore.readGlobalFile(r2_id, os.path.join(work_dir, 'R2.fastq'))

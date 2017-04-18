@@ -142,7 +142,6 @@ def local_call(tool,
             return subprocess.check_output(directCall, cwd=work_dir)
         else:
             subprocess.check_call(directCall, cwd=work_dir)
-    print("*************** fastqc is called in %s" % work_dir)
     for filename in outputs.keys():
         if not os.path.isabs(filename):
             filename = os.path.join(work_dir, filename)
