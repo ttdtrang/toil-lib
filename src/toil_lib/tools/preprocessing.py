@@ -7,7 +7,7 @@ from toil_lib.programs import docker_call, local_call
 from toil_lib.urls import download_url
 
 
-def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=None):
+def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=None, qualityTrimming=False, qualityCutoff="10"):
     """
     Adapter trimming for RNA-seq data
 
@@ -16,6 +16,9 @@ def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=No
     :param str r2_id: FileStoreID of fastq read 2 (if paired data)
     :param str fwd_3pr_adapter: Adapter sequence for the forward 3' adapter
     :param str rev_3pr_adapter: Adapter sequence for the reverse 3' adapter (second fastq pair)
+    :param str appExec: executable for cutadapt
+    :param boolean qualityTrimming: whether to perform quality trimming or not
+    :param boolean qualityCutoff: the cutoffs (5' and 3') for quality trimming. If only 1 cutoff is specified, only 3'-end trimming is done.
     :return: R1 and R2 FileStoreIDs
     :rtype: tuple
     """
@@ -36,6 +39,8 @@ def run_cutadapt(job, r1_id, r2_id, fwd_3pr_adapter, rev_3pr_adapter, appExec=No
     # Retrieve files
     parameters = ['-a', fwd_3pr_adapter,
                   '-m', '35']
+    if qualityTrimming and qualityCutoff:
+        parameters.extend(['-q', qualityCutoff])
     if r1_id and r2_id:
         job.fileStore.readGlobalFile(r1_id, os.path.join(work_dir, 'R1.fastq'))
         job.fileStore.readGlobalFile(r2_id, os.path.join(work_dir, 'R2.fastq'))
